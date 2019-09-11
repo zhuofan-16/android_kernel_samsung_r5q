@@ -3966,6 +3966,41 @@ static ssize_t ss_finger_hbm_updated_show(struct device *dev,
 	return strlen(buf);
 }
 
+static ssize_t ss_finger_mask_mode_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct samsung_display_driver_data *vdd =
+		(struct samsung_display_driver_data *)dev_get_drvdata(dev);
+	int value;
+
+	if (IS_ERR_OR_NULL(vdd)) {
+		LCD_ERR("no vdd");
+		return size;
+	}
+
+	sscanf(buf, "%d", &value);
+
+	mutex_lock(&vdd->finger_mask_lock);
+	vdd->finger_mask_updated = false;
+	if (vdd->finger_mask != value) {
+		vdd->finger_mask = value;
+		vdd->finger_mask_updated = true;
+		LCD_INFO("[FINGER_MASK]updated finger mask mode %d\n", vdd->finger_mask_updated);
+	}
+	mutex_unlock(&vdd->finger_mask_lock);
+
+	return size;
+}
+
+static ssize_t ss_finger_mask_mode_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct samsung_display_driver_data *vdd =
+		(struct samsung_display_driver_data *)dev_get_drvdata(dev);
+	sprintf(buf, "%d\n", vdd->finger_mask);
+	return strlen(buf);
+}
+
 static ssize_t ss_ub_con_det_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -4217,6 +4252,7 @@ static DEVICE_ATTR(window_color, S_IRUGO | S_IWUSR | S_IWGRP, ss_window_color_sh
 static DEVICE_ATTR(mask_brightness, S_IRUGO | S_IWUSR | S_IWGRP, NULL, ss_finger_hbm_store);
 static DEVICE_ATTR(actual_mask_brightness, S_IRUGO | S_IWUSR | S_IWGRP, ss_finger_hbm_updated_show, NULL);
 static DEVICE_ATTR(conn_det, S_IRUGO | S_IWUSR | S_IWGRP, ss_ub_con_det_show, ss_ub_con_det_store);
+static DEVICE_ATTR(finger_mask_mode, S_IRUGO | S_IWUSR | S_IWGRP, ss_finger_mask_mode_show, ss_finger_mask_mode_store);
 
 static struct attribute *panel_sysfs_attributes[] = {
 	&dev_attr_lcd_type.attr,
@@ -4291,6 +4327,7 @@ static struct attribute *panel_sysfs_attributes[] = {
 	&dev_attr_dia.attr,
 	&dev_attr_fp_green_circle.attr,
 	&dev_attr_window_color.attr,
+	&dev_attr_finger_mask_mode.attr,
 	NULL
 };
 static const struct attribute_group panel_sysfs_group = {
