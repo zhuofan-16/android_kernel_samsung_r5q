@@ -68,6 +68,10 @@
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
 
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#endif
+
 #define ARM_MMU500_ACTLR_CPRE		(1 << 1)
 
 #define ARM_MMU500_ACR_CACHE_LOCK	(1 << 26)
@@ -1207,7 +1211,8 @@ static int __arm_smmu_tlb_sync(struct arm_smmu_device *smmu,
 	dev_err_ratelimited(smmu->dev,
 			    "TLB sync timed out -- SMMU may be deadlocked ack 0x%x pwr 0x%x sync and invalidation progress 0x%x\n",
 			    sync_inv_ack, tbu_pwr_status, sync_inv_progress);
-	return -EINVAL;
+	dev_err_ratelimited(smmu->dev, "apps_smmu_scr0 = 0x%x, apps_smmu_inv_status = 0x%x \n", scm_io_read(0x15000000), scm_io_read(0x1500251C)); 
+	return -EINVAL; 
 }
 
 static void arm_smmu_tlb_sync_global(struct arm_smmu_device *smmu)
@@ -1611,6 +1616,9 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 	if (fatal_asf && (fsr & FSR_ASF)) {
 		dev_err(smmu->dev,
 			"Took an address size fault.  Refusing to recover.\n");
+
+		sec_debug_save_smmu_info_asf_fatal();
+
 		BUG();
 	}
 
@@ -1672,6 +1680,9 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 		if (!non_fatal_fault) {
 			dev_err(smmu->dev,
 				"Unhandled arm-smmu context fault!\n");
+
+			sec_debug_save_smmu_info_fatal();
+
 			BUG();
 		}
 	}

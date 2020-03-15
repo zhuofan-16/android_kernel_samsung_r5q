@@ -757,6 +757,7 @@ static struct request *attempt_merge(struct request_queue *q,
 	 * 'next' is going away, so update stats accordingly
 	 */
 	blk_account_io_merge(next);
+	blk_queue_io_vol_merge(q, next->cmd_flags, -1, 0);
 
 	req->ioprio = ioprio_best(req->ioprio, next->ioprio);
 	if (blk_rq_cpu_valid(next))
@@ -846,6 +847,14 @@ bool blk_rq_merge_ok(struct request *rq, struct bio *bio)
 
 enum elv_merge blk_try_merge(struct request *rq, struct bio *bio)
 {
+#ifdef CONFIG_BLK_DEV_CRYPT_DUN
+        /* It could obstruct blk_merge, as a result,
+         * it may cause the performance degradation.
+         * It should be improved in the near future.
+         */
+        if (blk_rq_dun(rq) || bio_dun(bio))
+                return ELEVATOR_NO_MERGE;
+#endif
 	if (req_op(rq) == REQ_OP_DISCARD &&
 	    queue_max_discard_segments(rq->q) > 1) {
 		return ELEVATOR_DISCARD_MERGE;

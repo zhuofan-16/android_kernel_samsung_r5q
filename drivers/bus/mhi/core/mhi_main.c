@@ -867,6 +867,7 @@ void mhi_create_devices(struct mhi_controller *mhi_cntrl)
 
 		/* add if there is a matching DT node */
 		mhi_assign_of_node(mhi_cntrl, mhi_dev);
+		
 
 		/*
 		 * if set, these device should get a early notification during
