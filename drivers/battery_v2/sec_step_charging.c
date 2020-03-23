@@ -582,6 +582,20 @@ void sec_bat_set_aging_info_step_charging(struct sec_battery_info *battery)
 	val.intval = battery->pdata->dc_step_chg_val_vfloat[battery->dc_step_chg_step-1];
 	psy_do_property(battery->pdata->charger_name, set,
 		POWER_SUPPLY_EXT_PROP_DIRECT_FLOAT_MAX, val);
+	
+	if (battery->step_charging_status >= 0 && !battery->dc_float_voltage_set) {
+		int float_max = battery->pdata->dc_step_chg_val_vfloat[battery->dc_step_chg_step-1];
+
+		val.intval = 0;
+		psy_do_property(battery->pdata->charger_name, get,
+			POWER_SUPPLY_EXT_PROP_DIRECT_VOLTAGE_MAX, val);
+
+		if (val.intval > float_max) {
+			val.intval = float_max;
+			psy_do_property(battery->pdata->charger_name, set,
+				POWER_SUPPLY_EXT_PROP_DIRECT_VOLTAGE_MAX, val);
+		}
+	}
 #endif
 }
 #endif

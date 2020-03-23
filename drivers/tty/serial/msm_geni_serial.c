@@ -180,6 +180,7 @@ struct msm_geni_serial_port {
 	bool is_clk_aon;
 	bool manual_flow;
 	struct msm_geni_serial_ver_info ver_info;
+	atomic_t dbg_rt_pm_status;
 };
 
 static const struct uart_ops msm_geni_serial_pops;
@@ -262,9 +263,11 @@ static void dump_ipc(void *ipc_ctx, char *prefix, char *string,
 
 static bool device_pending_suspend(struct uart_port *uport)
 {
+	struct msm_geni_serial_port *port = GET_DEV_PORT(uport);
 	int usage_count = atomic_read(&uport->dev->power.usage_count);
 
-	return (pm_runtime_status_suspended(uport->dev) || !usage_count);
+	return (pm_runtime_status_suspended(uport->dev) ||
+			(!atomic_read(&port->dbg_rt_pm_status) && !usage_count));
 }
 
 static bool check_transfers_inflight(struct uart_port *uport)
@@ -459,12 +462,19 @@ void msm_geni_serial_set_mctrl(struct uart_port *uport,
 	u32 uart_manual_rfr = 0;
 	struct msm_geni_serial_port *port = GET_DEV_PORT(uport);
 
-	if (device_pending_suspend(uport)) {
+	if (!uart_console(uport) && device_pending_suspend(uport)) {
 		IPC_LOG_MSG(port->ipc_log_misc,
-			"%s.Device is suspended, %s: mctrl=0x%x\n",
-			 __func__, current->comm, mctrl);
+			"%s:suspended: %s, mctrl=0x%x, ioctl=%d, usage=%d\n",
+			__func__, current->comm, mctrl, port->ioctl_count,
+			atomic_read(&uport->dev->power.usage_count));
 		return;
+	} else if (!uart_console(uport)) {
+		IPC_LOG_MSG(port->ipc_log_misc,
+			"%s: usage_count:%d ioctl_count:%d\n", __func__,
+			atomic_read(&uport->dev->power.usage_count),
+			port->ioctl_count);
 	}
+
 	if (!(mctrl & TIOCM_RTS)) {
 		uart_manual_rfr |= (UART_MANUAL_RFR_EN | UART_RFR_NOT_READY);
 		port->manual_flow = true;
@@ -1074,6 +1084,7 @@ static void start_rx_sequencer(struct uart_port *uport)
 	struct msm_geni_serial_port *port = GET_DEV_PORT(uport);
 	int ret;
 	u32 geni_se_param = UART_PARAM_RFR_OPEN;
+	unsigned long flags;
 
 	IPC_LOG_MSG(port->ipc_log_misc, "%s ++\n", __func__);
 	
@@ -1091,7 +1102,9 @@ static void start_rx_sequencer(struct uart_port *uport)
 				goto exit_start_rx_sequencer;
 			}
 		}
+		spin_lock_irqsave(&uport->lock, flags);
 		msm_geni_serial_stop_rx(uport);
+		spin_unlock_irqrestore(&uport->lock, flags);
 	}
 
 	/* Start RX with the RFR_OPEN to keep RFR in always ready state */
@@ -1119,7 +1132,9 @@ static void start_rx_sequencer(struct uart_port *uport)
 		if (ret) {
 			dev_err(uport->dev, "%s: RX Prep dma failed %d\n",
 				__func__, ret);
+			spin_lock_irqsave(&uport->lock, flags);
 			msm_geni_serial_stop_rx(uport);
+			spin_unlock_irqrestore(&uport->lock, flags);
 			goto exit_start_rx_sequencer;
 		}
 	}
@@ -1210,6 +1225,19 @@ static void stop_rx_sequencer(struct uart_port *uport)
 	bool done;
 
 	IPC_LOG_MSG(port->ipc_log_misc, "%s ++\n", __func__);
+	if (!uart_console(uport) && device_pending_suspend(uport)) {
+		IPC_LOG_MSG(port->ipc_log_misc,
+			"%s:suspended: ioctl=%d, usage=%d\n", __func__,
+			port->ioctl_count,
+			atomic_read(&uport->dev->power.usage_count));
+		return;
+	} else if (!uart_console(uport)) {
+		IPC_LOG_MSG(port->ipc_log_misc,
+			"%s: usage_count:%d ioctl_count:%d\n", __func__,
+			atomic_read(&uport->dev->power.usage_count),
+			port->ioctl_count);
+	}
+
 	if (port->xfer_mode == FIFO_MODE) {
 		geni_s_irq_en = geni_read_reg_nolog(uport->membase,
 							SE_GENI_S_IRQ_EN);
@@ -2905,6 +2933,9 @@ static int msm_geni_serial_runtime_suspend(struct device *dev)
 	geni_status = geni_read_reg_nolog(port->uport.membase, SE_GENI_STATUS);
 	if ((geni_status & M_GENI_CMD_ACTIVE))
 		stop_tx_sequencer(&port->uport);
+
+	/* Ensure we don't access reg when in suspend */
+	atomic_dec(&port->dbg_rt_pm_status);
 	ret = se_geni_resources_off(&port->serial_rsc);
 	if (ret) {
 		dev_err(dev, "%s: Error ret %d\n", __func__, ret);
@@ -2946,6 +2977,9 @@ static int msm_geni_serial_runtime_resume(struct device *dev)
 		__pm_relax(port->geni_wake);
 		goto exit_runtime_resume;
 	}
+
+	/* Ensure we don't access reg when not fully resumed */
+	atomic_inc(&port->dbg_rt_pm_status);
 	start_rx_sequencer(&port->uport);
 	/* Ensure that the Rx is running before enabling interrupts */
 	mb();

@@ -521,12 +521,15 @@ static int s2mu106_get_comp_socr(struct s2mu106_fuelgauge_data *fuelgauge)
 {
 	int comp_socr = 0;
 	int t_socr = 0;
-	int i_socr = (-1) * fuelgauge->i_socr_coeff * fuelgauge->avg_curr;
+	int i_socr = 0;
 
-	if (fuelgauge->temperature <= 0)
+	if (fuelgauge->temperature <= 0) {
+		i_socr = (-1) * fuelgauge->i_socr_coeff * fuelgauge->avg_curr;
 		t_socr = ((-223) * fuelgauge->temperature + fuelgauge->t_socr_coeff) / 1000;
-	else if (fuelgauge->temperature <= 200)
+	} else if (fuelgauge->temperature <= 200) {
+		i_socr = (-1) * fuelgauge->i_socr_coeff * fuelgauge->avg_curr;
 		t_socr = ((-75) * fuelgauge->temperature + fuelgauge->t_socr_coeff) / 1000;
+	}
 
 	comp_socr = ((t_socr + 1) * i_socr) / 100000;
 
@@ -548,7 +551,7 @@ static int s2mu106_get_soc_map(struct s2mu106_fuelgauge_data *fuelgauge,
 {
 	int soc_map = 0;
 
-	if (bat_charging) {
+	if (bat_charging || fuelgauge->is_charging) {
 		if (fuelgauge->soc0i >= 9950)
 			soc_map = 10000;
 		else
@@ -576,10 +579,7 @@ static void s2mu106_temperature_compensation(struct s2mu106_fuelgauge_data *fuel
 {
 	int soc_map = 0;
 	int ui_soc = 0;
-	u8 diff_soc = 0;
 	u8 data[2];
-	int soc_diff = 0;
-	u8 flag = 0;
 
 	fuelgauge->comp_socr = s2mu106_get_comp_socr(fuelgauge);
 
@@ -598,10 +598,10 @@ static void s2mu106_temperature_compensation(struct s2mu106_fuelgauge_data *fuel
 	if (fuelgauge->flag_mapping == true) {
 		if (fuelgauge->init_start) {
 			if (fuelgauge->temperature < fuelgauge->low_temp_limit) {
-				s2mu106_read_reg_byte(fuelgauge->i2c, 0x47, &flag);
-				if (flag & 0x01) {
-					s2mu106_read_reg(fuelgauge->i2c, S2MU106_REG_RSOC_R, data);
-					ui_soc = data[0];
+				s2mu106_read_reg(fuelgauge->i2c, S2MU106_REG_RSOC_R, data);
+
+				if (data[1] == 0) {
+					ui_soc = (data[1] << 8) | (data[0]);
 
 					pr_info("%s: temperature is low. use saved UI SOC(%d)"
 							" for mapping, data[1] = 0x%02x, data[0] = 0x%02x\n",
@@ -625,56 +625,19 @@ static void s2mu106_temperature_compensation(struct s2mu106_fuelgauge_data *fuel
 					fuelgauge->soc0i = fuelgauge->rsoc;
 				}
 			} else {
-				s2mu106_read_reg_byte(fuelgauge->i2c, 0x47, &flag);
-				if (flag & 0x01) {
-					s2mu106_read_reg(fuelgauge->i2c, S2MU106_REG_RSOC_R, data);
-					if (data[1] & 0x80) { 
-						soc_diff = ((~data[1]) & 0xFF) + 1;
-						soc_diff *= 100;
-						fuelgauge->soc_r = fuelgauge->rsoc - soc_diff;
-					} else {
-						soc_diff = data[1] & 0x7F;
-						soc_diff *= 100;
-						fuelgauge->soc_r = fuelgauge->rsoc + soc_diff;
-					}
-
-					pr_info("%s: init, use saved soc_diff(%d)"
-							" data[1] = 0x%02x, data[0] = 0x%02x\n",
-							__func__, soc_diff, data[1], data[0]);
-
-					if (fuelgauge->soc_r > 10000)
-						fuelgauge->soc_r = 10000;
-					else if (fuelgauge->soc_r < 0)
-						fuelgauge->soc_r = 0;
-
-					fuelgauge->socni = fuelgauge->soc_r;
-					fuelgauge->soc0i = fuelgauge->rsoc;
-
-				} else {
-					pr_info("%s: init, diff_soc is not saved\n",
-							__func__);
-
-					fuelgauge->socni = fuelgauge->rsoc;
-					fuelgauge->soc0i = fuelgauge->rsoc;
-				}
+				fuelgauge->socni = fuelgauge->rsoc;
+				fuelgauge->soc0i = fuelgauge->rsoc;
 			}
 		} else {
-			/* After mapping, SOC_R is maintained.
-			   If mapping occurs continuously, SOC is not changed.
-			   So SOC_R need to be updated before mapping.
-			 */
-			pr_info("%s: original SOC_R = %d, pre_bat_charging = %d, bat_charging = %d\n",
-					__func__, fuelgauge->soc_r, fuelgauge->pre_bat_charging,
-					fuelgauge->bat_charging);
-
-			if (fuelgauge->is_charging == false) {
-				if (!(fuelgauge->pre_bat_charging && !fuelgauge->bat_charging)) {
-					soc_map = s2mu106_get_soc_map(fuelgauge,
-						fuelgauge->pre_bat_charging, fuelgauge->pre_comp_socr);
-					fuelgauge->soc_r = soc_map;
-					pr_info("%s: use %d for SOCni\n", __func__, fuelgauge->soc_r);
-				}
-			}
+			/* If the difference between SOC_M and SOC_R is 1% or more,
+			SOC_R is mapped to follow SOC_M
+			*/
+			pr_info("%s: socni updated - SOC_M(%d), SOC_R(%d)\n",
+						__func__, fuelgauge->rsoc, fuelgauge->soc_r);
+			if (fuelgauge->rsoc > fuelgauge->soc_r + 100)
+				fuelgauge->soc_r += 10;
+			else if (fuelgauge->soc_r > fuelgauge->rsoc + 100)
+				fuelgauge->soc_r -= 10;
 
 			fuelgauge->socni = fuelgauge->soc_r;
 			fuelgauge->soc0i = fuelgauge->rsoc;
@@ -687,7 +650,7 @@ static void s2mu106_temperature_compensation(struct s2mu106_fuelgauge_data *fuel
 	if (fuelgauge->flag_mapping == true) {
 		if (fuelgauge->init_start) {
 			if (fuelgauge->temperature >= fuelgauge->low_temp_limit ||
-				((fuelgauge->temperature < fuelgauge->low_temp_limit) && !(flag & 0x01))) {
+				((fuelgauge->temperature < fuelgauge->low_temp_limit) && (data[1] != 0))) {
 				fuelgauge->soc_r = soc_map;
 				pr_info("%s: When Initial Mapping, UI SOC = soc_r = soc_map\n", __func__, fuelgauge->soc_r);
 				fuelgauge->ui_soc = fuelgauge->soc_r / 100;
@@ -728,29 +691,16 @@ static void s2mu106_temperature_compensation(struct s2mu106_fuelgauge_data *fuel
 	fuelgauge->pre_bat_charging = fuelgauge->bat_charging;
 	fuelgauge->flag_mapping = false;
 
-	if (fuelgauge->ui_soc > (fuelgauge->rsoc / 100)) {
-		diff_soc = fuelgauge->ui_soc - (fuelgauge->rsoc / 100);
-		data[1] = diff_soc & 0x7F;
-	} else {
-		diff_soc = (fuelgauge->rsoc / 100) - fuelgauge->ui_soc;
-		data[1] = ((~diff_soc) & 0xFF) + 1;
-	}
-
 	/* Save UI SOC for maintain SOC, after low temperature reset */
 	data[0] = fuelgauge->ui_soc;
+	data[1] = 0;
 	s2mu106_write_reg(fuelgauge->i2c, S2MU106_REG_RSOC_R, data);
 
 	/* TODO: Print UI SOC & saved value for debugging */
 	s2mu106_read_reg(fuelgauge->i2c, S2MU106_REG_RSOC_R, data);
 	ui_soc = (data[1] << 8) | (data[0]);
-
-	/* saved UI soc flag setting 0x47[0] */
-	s2mu106_read_reg_byte(fuelgauge->i2c, 0x47, &flag);
-	flag |= 0x01;
-	s2mu106_write_and_verify_reg_byte(fuelgauge->i2c, 0x47, flag);
-
 	pr_info("%s: saved UI SOC = %d, data[1] = 0x%02x, data[0] = 0x%02x\n",
-			__func__, fuelgauge->ui_soc, data[1], data[0]);
+			__func__, ui_soc, data[1], data[0]);
 }
 #endif
 

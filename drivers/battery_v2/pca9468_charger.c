@@ -4075,6 +4075,9 @@ static int pca9468_chg_get_property(struct power_supply *psy,
 					val->intval = ret;
 			}
 			break;
+		case POWER_SUPPLY_EXT_PROP_DIRECT_VOLTAGE_MAX:
+			val->intval = pca9468->float_voltage;
+			break;
 		default:
 			return -EINVAL;
 		}

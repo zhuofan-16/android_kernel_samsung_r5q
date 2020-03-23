@@ -105,11 +105,18 @@ static bool sec_direct_chg_set_switching_charge(
 	pr_info("%s: charger_mode(%s->%s)\n", __func__,
 		sec_direct_charger_mode_str[charger->charger_mode_main],
 		sec_direct_charger_mode_str[charger_mode]);
-	charger->charger_mode_main = charger_mode;
 
-	value.intval = charger_mode;
-	psy_do_property(charger->pdata->main_charger_name, set,
-		POWER_SUPPLY_PROP_CHARGING_ENABLED, value);
+	if ((charger->charger_mode_main != charger_mode)
+#if defined(CONFIG_LSI_IFPMIC)
+		|| (charger_mode == SEC_BAT_CHG_MODE_BUCK_OFF)
+#endif
+		) {
+		charger->charger_mode_main = charger_mode;
+
+		value.intval = charger_mode;
+		psy_do_property(charger->pdata->main_charger_name, set,
+			POWER_SUPPLY_PROP_CHARGING_ENABLED, value);
+	}
 
 	return true;
 }
@@ -389,6 +396,10 @@ static int sec_direct_chg_get_property(struct power_supply *psy,
 				val->intval = false;
 			break;
 		case POWER_SUPPLY_EXT_PROP_MEASURE_INPUT:
+			psy_do_property(charger->pdata->direct_charger_name, get, ext_psp, value);
+			val->intval = value.intval;
+			break;
+		case POWER_SUPPLY_EXT_PROP_DIRECT_VOLTAGE_MAX:
 			psy_do_property(charger->pdata->direct_charger_name, get, ext_psp, value);
 			val->intval = value.intval;
 			break;
