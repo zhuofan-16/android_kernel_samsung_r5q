@@ -4333,8 +4333,6 @@ static int mmc_blk_alloc_parts(struct mmc_card *card, struct mmc_blk_data *md)
 static void mmc_blk_remove_req(struct mmc_blk_data *md)
 {
 	struct mmc_card *card;
-	struct request_queue *q = NULL;
-	struct request *req = NULL;
 
 	if (md) {
 		/*
@@ -4350,18 +4348,6 @@ static void mmc_blk_remove_req(struct mmc_blk_data *md)
 		}
 		blk_set_queue_dying(md->queue.queue);
 		mmc_cleanup_queue(&md->queue);
-		/*
-		 * Flush remaining requests again
-		 * and set queue to DEAD
-		 */
-		q = md->queue.queue;
-		spin_lock_irq(md->queue.queue->queue_lock);
-		while ((req = blk_fetch_request(q)) != NULL) {
-			req->rq_flags |= RQF_QUIET;
-			__blk_end_request_all(req, BLK_STS_IOERR);
-		}
-		queue_flag_set(QUEUE_FLAG_DEAD, md->queue.queue);
-		spin_unlock_irq(md->queue.queue->queue_lock);
 
 		if (md->flags & MMC_BLK_CMD_QUEUE)
 			mmc_cmdq_clean(&md->queue, card);

@@ -965,6 +965,25 @@ fail:
 	return -EIO;
 }
 
+#if defined(CONFIG_PDIC_PD30)
+static void s2mu106_send_ocp_info(void *_data)
+{
+	struct power_supply *psy_battery;
+	union power_supply_propval val;
+
+	psy_battery = get_power_supply_by_name("battery");
+
+	if (psy_battery) {
+		val.intval = 1;
+#if defined(CONFIG_DIRECT_CHARGING)
+		psy_battery->desc->set_property(psy_battery,
+	(enum power_supply_property)POWER_SUPPLY_EXT_PROP_DIRECT_TA_ALERT, &val);
+#endif
+	} else
+		pr_err("%s: Fail to get psy battery\n", __func__);
+}
+#endif
+
 static int s2mu106_receive_message(void *data)
 {
 	struct s2mu106_usbpd_data *pdic_data = data;
@@ -3765,6 +3784,9 @@ static usbpd_phy_ops_type s2mu106_ops = {
 	.power_off_water_check	= s2mu106_water_check,
 #endif
 	.get_water_detect	= s2mu106_get_water_detect,
+#if defined(CONFIG_PDIC_PD30)
+	.send_ocp_info		= s2mu106_send_ocp_info,
+#endif
 };
 
 #if defined CONFIG_PM

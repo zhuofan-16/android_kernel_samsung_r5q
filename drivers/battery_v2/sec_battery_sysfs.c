@@ -2319,6 +2319,11 @@ ssize_t sec_bat_store_attrs(
 #if !defined(CONFIG_SEC_FACTORY)
 			if (x) {
 				battery->store_mode = true;
+#if defined(CONFIG_LSI_IFPMIC)
+				pr_info("HV disable for store mode\n");
+				sec_bat_set_current_event(battery,
+						SEC_BAT_CURRENT_EVENT_HV_DISABLE, SEC_BAT_CURRENT_EVENT_HV_DISABLE);
+#endif
 				wake_lock(&battery->parse_mode_dt_wake_lock);
 				queue_delayed_work(battery->monitor_wqueue,
 					&battery->parse_mode_dt_work, 0);

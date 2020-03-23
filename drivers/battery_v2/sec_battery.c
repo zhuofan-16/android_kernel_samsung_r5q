@@ -6253,6 +6253,13 @@ static int sec_bat_set_property(struct power_supply *psy,
 			pr_info("HV wired charging mode is %s\n", (val->intval == CH_MODE_AFC_DISABLE_VAL ? "Disabled" : "Enabled"));
 			sec_bat_set_current_event(battery, (val->intval == CH_MODE_AFC_DISABLE_VAL ?
 				SEC_BAT_CURRENT_EVENT_HV_DISABLE : 0), SEC_BAT_CURRENT_EVENT_HV_DISABLE);
+#if defined(CONFIG_LSI_IFPMIC)
+			if (battery->store_mode) {
+				pr_info("HV disable for store mode\n");
+				sec_bat_set_current_event(battery,
+						SEC_BAT_CURRENT_EVENT_HV_DISABLE, SEC_BAT_CURRENT_EVENT_HV_DISABLE);
+			}
+#endif
 			break;
 		case POWER_SUPPLY_EXT_PROP_WC_CONTROL:
 			pr_info("%s: Recover MFC IC (wc_enable: %d)\n",
@@ -7215,6 +7222,11 @@ static int sec_bat_cable_check(struct sec_battery_info *battery,
 		break;
 	case ATTACHED_DEV_RDU_TA_MUIC:
 		battery->store_mode = true;
+#if defined(CONFIG_LSI_IFPMIC)
+		pr_info("HV disable for store mode\n");
+		sec_bat_set_current_event(battery,
+				SEC_BAT_CURRENT_EVENT_HV_DISABLE, SEC_BAT_CURRENT_EVENT_HV_DISABLE);
+#endif
 		wake_lock(&battery->parse_mode_dt_wake_lock);
 		queue_delayed_work(battery->monitor_wqueue, &battery->parse_mode_dt_work, 0);
 		current_cable_type = SEC_BATTERY_CABLE_TA;
@@ -8930,6 +8942,11 @@ static int sec_battery_probe(struct platform_device *pdev)
 
 #if defined(CONFIG_STORE_MODE) && !defined(CONFIG_SEC_FACTORY)
 	battery->store_mode = true;
+#if defined(CONFIG_LSI_IFPMIC)
+	pr_info("HV disable for store mode\n");
+	sec_bat_set_current_event(battery,
+			SEC_BAT_CURRENT_EVENT_HV_DISABLE, SEC_BAT_CURRENT_EVENT_HV_DISABLE);
+#endif
 	sec_bat_parse_mode_dt(battery);
 #endif
 

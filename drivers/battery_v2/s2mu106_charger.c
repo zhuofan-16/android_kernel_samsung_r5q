@@ -702,6 +702,14 @@ static bool s2mu106_chg_init(struct s2mu106_charger_data *charger)
 	s2mu106_read_reg(charger->i2c, S2MU106_CHG_CTRL12, &temp);
 	pr_info("%s : for WDT setting S2MU106_CHG_CTRL12 : 0x%x\n", __func__, temp);
 
+#ifndef CONFIG_SEC_FACTORY
+	/* VSSH LDO enable, even if vbusdet vol drop */
+	/* Can not be charged after ovp test W/A */
+	s2mu106_update_reg(charger->i2c, 0x3C, 0x30, 0x30);
+#else
+	s2mu106_update_reg(charger->i2c, 0x3C, 0x10, 0x30);
+#endif
+
 	/* ICR Disable */
 	s2mu106_update_reg(charger->i2c, 0x7D, 0x02, 0x02);
 
@@ -729,9 +737,6 @@ static bool s2mu106_chg_init(struct s2mu106_charger_data *charger)
 	s2mu106_update_reg(charger->i2c, S2MU106_CHG_CTRL14,
 				S2MU106_TOPOFF_TIMER_90m << TOP_OFF_TIME_SHIFT, TOP_OFF_TIME_MASK);
 
-	/* vbat ocp 5.5A */
-	s2mu106_update_reg(charger->i2c, S2MU106_CHG_CTRL21,
-				S2MU106_SET_BAT_OCP_5500mA << SET_BAT_OCP_SHIFT, SET_BAT_OCP_MASK);
 	/* ivr debounce time(default 10ms -> 30ms) */
 	s2mu106_update_reg(charger->i2c, 0x95, 0x03, 0x03);
 	
@@ -1440,6 +1445,11 @@ static int s2mu106_chg_set_property(struct power_supply *psy,
 				 * Charger/muic interrupt can occur by entering Bypass mode
 				 * Disable all interrupt mask for testing current measure.
 				 */
+#ifndef CONFIG_SEC_FACTORY
+				/* VSSH LDO default setting */
+				/* Can not be charged after ovp test W/A */
+				s2mu106_update_reg(charger->i2c, 0x3C, 0x10, 0x30);
+#endif
 
 				/* PM Disable */
 				psy_do_property("s2mu106_pmeter", set,
@@ -1473,6 +1483,11 @@ static int s2mu106_chg_set_property(struct power_supply *psy,
 				s2mu106_update_reg(charger->i2c, 0xEF, 0x0, 0x1);
 			} else {
 				pr_info("%s: Bypass exit for current measure\n", __func__);
+#ifndef CONFIG_SEC_FACTORY
+				/* VSSH LDO enable, even if vbusdet vol drop */
+				/* Can not be charged after ovp test W/A */
+				s2mu106_update_reg(charger->i2c, 0x3C, 0x30, 0x30);
+#endif
 
 				value.intval = SEC_BAT_FGSRC_SWITCHING_ON;
 				psy_do_property("s2mu106-fuelgauge", set,

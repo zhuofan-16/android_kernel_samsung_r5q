@@ -637,17 +637,27 @@ int get_device_type(struct input_dev *dev){
 
 // ********** Detect Events ********** //
 void input_booster(struct input_dev *dev)
-{		
+{
 	if (dev == NULL)
-		return;	
+		return;
+
 	int enable = get_device_type(dev);
 
-	if (dev->device_type <= NONE_TYPE_DEVICE || dev->device_type >= MAX_BOOSTER_CNT || enable < 0 )
+	if (dev->device_type <= NONE_TYPE_DEVICE || dev->device_type >= MAX_BOOSTER_CNT || enable < 0){
 		return;
-	
+	}
+	if(device_type_infos[dev->device_type].input_booster_dt == NULL){
+		pr_err("[Input Booster2] input_booster_dt is null And Event - %s :::: device_type : %d \n", (enable) ? "PRESS" : "RELEASE", dev->device_type);
+		return;
+	}
+	if(device_type_infos[dev->device_type].input_booster == NULL){
+		pr_err("[Input Booster2] input_booster is null And Event - %s :::: device_type : %d \n", (enable) ? "PRESS" : "RELEASE", dev->device_type);
+		return;
+	}
+
 	pr_booster("[Input Booster2] %s EVENT - %s \n", device_type_infos[dev->device_type].input_booster_dt->pDT->label, 
 		(enable) ? "PRESS" : "RELEASE");
-	
+
 	if (device_type_infos[dev->device_type].input_booster_dt->level > 0) {
 		device_type_infos[dev->device_type].input_booster->event_type = enable;
 		if (enable == BOOSTER_ON) {
@@ -655,6 +665,11 @@ void input_booster(struct input_dev *dev)
 			device_type_infos[dev->device_type].input_booster->multi_events++;
 		}else {
 			device_type_infos[dev->device_type].input_booster->multi_events--;
+		}
+
+		if(&device_type_infos[dev->device_type].input_booster->input_booster_set_booster_work == NULL){
+			pr_err("[Input Booster2] Work Struct is null And %s Event - %s :::: device_type : %d \n", device_type_infos[dev->device_type].input_booster_dt->pDT->label, (enable) ? "PRESS" : "RELEASE", dev->device_type);
+			return;
 		}
 		schedule_work(&device_type_infos[dev->device_type].input_booster->input_booster_set_booster_work);
 	}

@@ -368,7 +368,8 @@ void usbpd_set_ops(struct device *dev, usbpd_phy_ops_type *ops)
 	pd_data->phy_ops.get_pps_voltage = ops->get_pps_voltage;
 	pd_data->phy_ops.send_hard_reset_dc = ops->send_hard_reset_dc;
 	pd_data->phy_ops.force_pps_disable = ops->force_pps_disable;
-	}
+	} else
+		pd_data->phy_ops.send_ocp_info = ops->send_ocp_info;
 #endif
 	pd_data->phy_ops.get_lpm_mode = ops->get_lpm_mode;
 	pd_data->phy_ops.set_lpm_mode = ops->set_lpm_mode;
@@ -578,6 +579,7 @@ inline bool usbpd_send_ctrl_msg(struct usbpd_data *d, msg_header_type *h,
 		unsigned msg, unsigned dr, unsigned pr)
 {
 	h->msg_type = msg;
+	h->spec_revision = d->specification_revision;
 	h->port_data_role = dr;
 	h->port_power_role = pr;
 	h->num_data_objs = 0;

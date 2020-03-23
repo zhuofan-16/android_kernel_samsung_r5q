@@ -39,19 +39,14 @@
 #include "tas25xx-algo.h"
 
 static uint32_t port = 0;
-static uint32_t imped_min[MAX_CHANNELS] = {2621440, 2621440};
-static uint32_t imped_max[MAX_CHANNELS] = {5242880, 5242880};
-static uint32_t f0_min[MAX_CHANNELS] = {262144000, 262144000};
-static uint32_t f0_max[MAX_CHANNELS] = {524288000, 524288000};
-static uint32_t q_min[MAX_CHANNELS] = {524288, 524288};
-static uint32_t q_max[MAX_CHANNELS] = {1572864, 1572864};
 
 static uint8_t calibration_result[MAX_CHANNELS] = {STATUS_NONE};
 static uint8_t validation_result[MAX_CHANNELS] = {STATUS_NONE};
 static bool calibration_status = 0;
-static bool validation_status = 0;
+static bool validation_running_status = 0;
 static uint32_t calib_re_hold[MAX_CHANNELS] = {0};
 static uint32_t amb_temp_hold[MAX_CHANNELS] = {0};
+static int32_t g_iv_vbat_fmt = IV_SENSE_FORMAT_NO_VBAT;
 
 /*Mutex to serialize DSP read/write commands*/
 static struct mutex routing_lock;
@@ -119,6 +114,8 @@ int afe_smartamp_algo_ctrl(u8 *user_data, uint32_t param_id,
 	mutex_unlock(&routing_lock);
 	return ret;
 }
+EXPORT_SYMBOL(afe_smartamp_algo_ctrl);
+
 
 static uint8_t tas25xx_get_amb_temp(void)
 {
@@ -245,6 +242,35 @@ void tas25xx_update_big_data(void)
 			p_tas25xx_algo->b_data[iter].temp_over_count += data[3];
 		}
 	}
+}
+
+bool tas25xx_set_iv_bit_fomat(int iv_data_with, int vbat, int update_now)
+{
+	int32_t param_id;
+	int32_t ret;
+	bool success;
+
+	if ((vbat == 1) && (iv_data_with == 12)) {
+		g_iv_vbat_fmt = IV_SENSE_FORMAT_12_BIT_WITH_8BIT_VBAT;
+	} else {
+		g_iv_vbat_fmt = IV_SENSE_FORMAT_NO_VBAT;
+	}
+
+	success = true;
+
+	if (update_now) {
+		param_id = (TAS_SA_IV_VBAT_FMT)| (1<<24) | (1<<16);
+		pr_info("TI-SmartPA: %s: Sending IV,Vbat format %d\n", __func__, g_iv_vbat_fmt);
+		ret = afe_smartamp_algo_ctrl((u8 *)&g_iv_vbat_fmt, param_id,
+				TAS_SET_PARAM, sizeof(uint32_t), AFE_SMARTAMP_MODULE_RX);
+		if (ret < 0) {
+			pr_err("TI-SmartPA: %s: Failed to set config for iv-vbat data format\n", __func__);
+			success = false;
+		}
+
+	}
+
+	return success;
 }
 
 void tas25xx_send_algo_calibration(void)
@@ -558,59 +584,37 @@ static void valid_work_routine(struct work_struct *work)
 	uint8_t iter = 0;
 	uint32_t data = 0;
 	uint32_t param_id = 0;
-	uint32_t f0[MAX_CHANNELS] = {0};
-	uint32_t q[MAX_CHANNELS] = {0};
 	int32_t ret = 0;
-	
-	//Get F0,Q
+
+	//Get Validation Status
 	for(iter = 0; iter < p_tas25xx_algo->spk_count; iter++)
 	{
 		data = 0;//Reset data to 0
-		param_id = ((TAS_SA_GET_F0)|((iter+1)<<24)|(1<<16));
+		param_id = ((TAS_SA_GET_VALID_STATUS)|((iter+1)<<24)|(1<<16));
 		ret = afe_smartamp_algo_ctrl((u8*)&data, param_id,
 			TAS_GET_PARAM, sizeof(uint32_t), AFE_SMARTAMP_MODULE_RX);
 		if (ret < 0) {
 			validation_result[iter] = STATUS_FAIL;
-			pr_info("[TI-SmartPA:%s]f0 read failed. Exiting ..\n", __func__);
+			pr_info("[TI-SmartPA:%s]status read failed \n", __func__);
 		} else {
-			f0[iter] = data;
-			data = 0;
-			param_id = ((TAS_SA_GET_Q)|((iter+1)<<24)|(1<<16));
-			ret = afe_smartamp_algo_ctrl((u8*)&data, param_id,
-			TAS_GET_PARAM, sizeof(uint32_t), AFE_SMARTAMP_MODULE_RX);
-			if (ret < 0) {
+			if (data == VALIDATION_SUCCESS){
+				validation_result[iter] = STATUS_SUCCESS;
+			}
+			else{
 				validation_result[iter] = STATUS_FAIL;
-				pr_info("[TI-SmartPA:%s]q read failed. Exiting ..\n", __func__);
-			} else {
-				q[iter] = data;
-				if ((f0[iter] < p_tas25xx_algo->f0_min[iter]) || (f0[iter] > p_tas25xx_algo->f0_max[iter]))
-				{
-					validation_result[iter] = STATUS_FAIL;
-				}
-				else
-				{
-					if ((q[iter] < p_tas25xx_algo->q_min[iter]) || (q[iter] > p_tas25xx_algo->q_max[iter]))
-					{
-						validation_result[iter] = STATUS_FAIL;
-					}
-					else
-						validation_result[iter] = STATUS_SUCCESS;
-				}
-				pr_info("[TI-SmartPA:%s] Channel-%d", __func__, iter);
-				pr_info("[TI-SmartPA:%s]f0 is %d, valid range %d - %d\n",__func__, 
-					(f0[iter] >> 19), (p_tas25xx_algo->f0_min[iter] >> 19), (p_tas25xx_algo->f0_max[iter] >> 19));
-				pr_info("[TI-SmartPA:%s]Q is %d.%d, valid range %d.%d - %d.%d \n",__func__, 
-					(int32_t)trans_val_to_user_i(q[iter], QFORMAT19), (int32_t)trans_val_to_user_m(q[iter], QFORMAT19),
-					(int32_t)trans_val_to_user_i(p_tas25xx_algo->q_min[iter], QFORMAT19), 
-					(int32_t)trans_val_to_user_m(p_tas25xx_algo->q_min[iter], QFORMAT19),
-					(int32_t)trans_val_to_user_i(p_tas25xx_algo->q_max[iter], QFORMAT19), 
-					(int32_t)trans_val_to_user_m(p_tas25xx_algo->q_max[iter], QFORMAT19));
-				pr_info("[TI-SmartPA:%s] result: %s", __func__, 
-					validation_result[iter] == STATUS_SUCCESS ? "Success":"Fail");
 			}
 		}
+		pr_info("[TI-SmartPA:%s] Channel-%d", __func__, iter);
+		pr_info("[TI-SmartPA:%s] validation_result %s(0x%x)\n",__func__,
+			validation_result[iter] == STATUS_SUCCESS ? "Success":"Fail", (int32_t)data);
+		
+		/*De-Init the validation process*/
+		data = 0;//Value is ignored
+		param_id = (TAS_SA_VALID_DEINIT)|((iter+1)<<24)|(1<<16);
+		ret = afe_smartamp_algo_ctrl((u8*)&data, param_id,
+			TAS_SET_PARAM, sizeof(uint32_t), AFE_SMARTAMP_MODULE_RX);
 	}
-	validation_status = 0;
+	validation_running_status = 0;
 	return;
 }
 
@@ -627,6 +631,9 @@ static ssize_t tas25xx_valid_validation_store(struct device *dev,
 					struct device_attribute *attr,
 					const char *buf, size_t size)
 {	
+	uint8_t iter = 0;
+	uint32_t data = 0;
+	uint32_t param_id = 0;
 	int32_t start = 0;
 	int32_t ret = 0;
 	
@@ -639,10 +646,24 @@ static ssize_t tas25xx_valid_validation_store(struct device *dev,
 	
 	if(start)
 	{
-		//Give time for algorithm to converge rdc
-		validation_status = 1;
+		//Init
+		for(iter = 0; iter < p_tas25xx_algo->spk_count; iter++)
+		{
+			data = 1;/*Value is ignored*/
+			param_id = (TAS_SA_VALID_INIT)|((iter+1)<<24)|(1<<16);
+			ret = afe_smartamp_algo_ctrl((u8*)&data, param_id
+				, TAS_SET_PARAM, sizeof(uint32_t), AFE_SMARTAMP_MODULE_RX);
+			if (ret < 0)
+			{
+				pr_err("[TI-SmartPA:%s] Init error. Exiting ..", __func__);
+				goto end;
+			}
+		}
+
+		//Give time for algorithm to converge V-sns level
+		validation_running_status = 1;
 		schedule_delayed_work(&p_tas25xx_algo->valid_work,
-				msecs_to_jiffies(VALID_TIME * 1000));
+				msecs_to_jiffies(VALIDATION_TIME * 1000));
 	}
 end:
 	return size;
@@ -653,7 +674,7 @@ static ssize_t tas25xx_valid_validation_show(struct device *dev,
 					char *buf)
 {
 	return sprintf(buf, "%s\n",
-			(validation_status) ? "Enabled" : "Disabled");
+			(validation_running_status) ? "Enabled" : "Disabled");
 }
 
 static ssize_t tas25xx_valid_status_show(struct device *dev,
@@ -915,19 +936,12 @@ static void update_dts_info(void)
 	}
 
 	p_tas25xx_algo->port = port;
-	memcpy(p_tas25xx_algo->imped_min, imped_min, sizeof(uint32_t)*MAX_CHANNELS);
-	memcpy(p_tas25xx_algo->imped_max, imped_max, sizeof(uint32_t)*MAX_CHANNELS);
-	memcpy(p_tas25xx_algo->f0_min, f0_min, sizeof(uint32_t)*MAX_CHANNELS);
-	memcpy(p_tas25xx_algo->f0_max, f0_max, sizeof(uint32_t)*MAX_CHANNELS);
-	memcpy(p_tas25xx_algo->q_min, q_min, sizeof(uint32_t)*MAX_CHANNELS);
-	memcpy(p_tas25xx_algo->q_max, q_max, sizeof(uint32_t)*MAX_CHANNELS);
 }
 
 void tas25xx_parse_algo_dt(struct device_node *np)
 {
 	uint32_t data = 0;
 	int32_t ret = 0;
-	int32_t ch = 0;
 
 	ret = of_property_read_u32(np, "ti,port_id", &data);
 	if (ret) {
@@ -936,78 +950,6 @@ void tas25xx_parse_algo_dt(struct device_node *np)
 	} else {
 		port = data;
 		pr_err("[TI-SmartPA:%s] ti,port_id=0x%x",
-			__func__, data);
-	}
-
-	ret = of_property_read_u32(np, "ti,re_min", &data);
-	if (ret) {
-		pr_err("[TI-SmartPA:%s] Looking up %s property in node %s failed %d\n",
-			__func__, "ti,re_min", np->full_name, ret);
-	} else {
-		for(ch = 0; ch < MAX_CHANNELS; ch++) {
-			imped_min[ch] = data;
-		}
-		pr_err("[TI-SmartPA:%s] imped_min data=0x%x",
-			__func__, data);
-	}
-
-	ret = of_property_read_u32(np, "ti,re_max", &data);
-	if (ret) {
-		pr_err("[TI-SmartPA:%s] Looking up %s property in node %s failed %d\n",
-			__func__, "ti,re_max", np->full_name, ret);
-	} else {
-		for(ch = 0; ch < MAX_CHANNELS; ch++) {
-			imped_max[ch] = data;
-		}
-		pr_err("[TI-SmartPA:%s] imped_max data=0x%x",
-			__func__, data);
-	}
-
-	ret = of_property_read_u32(np, "ti,f0_min", &data);
-	if (ret) {
-		pr_err("[TI-SmartPA:%s] Looking up %s property in node %s failed %d\n",
-			__func__, "ti,f0_min", np->full_name, ret);
-	} else {
-		for(ch = 0; ch < MAX_CHANNELS; ch++) {
-			f0_min[ch] = data;
-		}
-		pr_err("[TI-SmartPA:%s] data=0x%x",
-			__func__, data);
-	}
-
-	ret = of_property_read_u32(np, "ti,f0_max", &data);
-	if (ret) {
-		pr_err("[TI-SmartPA:%s] Looking up %s property in node %s failed %d\n",
-			__func__, "ti,f0_max", np->full_name, ret);
-	} else {
-		for(ch = 0; ch < MAX_CHANNELS; ch++) {
-			f0_max[ch] = data;
-		}
-		pr_err("[TI-SmartPA:%s] data=0x%x",
-			__func__, data);
-	}
-
-	ret = of_property_read_u32(np, "ti,q_min", &data);
-	if (ret) {
-		pr_err("[TI-SmartPA:%s] Looking up %s property in node %s failed %d\n",
-			__func__, "ti,q_min", np->full_name, ret);
-	} else {
-		for(ch = 0; ch < MAX_CHANNELS; ch++) {
-			q_min[ch] = data;
-		}
-		pr_err("[TI-SmartPA:%s] data=0x%x",
-			__func__, data);
-	}
-
-	ret = of_property_read_u32(np, "ti,q_max", &data);
-	if (ret) {
-		pr_err("[TI-SmartPA:%s] Looking up %s property in node %s failed %d\n",
-			__func__, "ti,q_max", np->full_name, ret);
-	} else {
-		for(ch = 0; ch < MAX_CHANNELS; ch++) {
-			q_max[ch] = data;
-		}
-		pr_err("[TI-SmartPA:%s] data=0x%x",
 			__func__, data);
 	}
 

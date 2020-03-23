@@ -501,6 +501,7 @@ typedef struct usbpd_phy_ops {
 	void    (*send_psrdy)(void *);
 	int    (*pps_enable)(void *, int);
 	int    (*get_pps_enable)(void *, int *);
+	void    (*send_ocp_info)(void *);
 #endif
 } usbpd_phy_ops_type;
 
@@ -521,6 +522,7 @@ struct policy_data {
 	bool			txhardresetflag;
 	bool			pd_support;
 	bool			pps_enable;
+	bool			send_ocp;
 	bool			check_ps_ready_retry;
 };
 

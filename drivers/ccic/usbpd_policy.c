@@ -1346,13 +1346,13 @@ policy_state usbpd_policy_snk_ready(struct policy_data *policy)
 			CHECK_MSG(pd_data, MSG_GET_SINK_CAP_EXTENDED, PE_SNK_Send_Not_Supported);
 
 			/* PD 3.0 : Data Message */
-			CHECK_MSG(pd_data, MSG_BATTERY_STATUS, PE_SNK_Send_Not_Supported);
-			CHECK_MSG(pd_data, MSG_ALERT, PE_SNK_Ready);
+			CHECK_MSG(pd_data, MSG_BATTERY_STATUS, PE_SNK_Ready);
+			CHECK_MSG(pd_data, MSG_ALERT, PE_SNK_Source_Alert_Received);
 			CHECK_MSG(pd_data, MSG_GET_COUNTRY_INFO, PE_SNK_Send_Not_Supported);
 
 			/* PD 3.0 : Extended Message */
 			CHECK_MSG(pd_data, MSG_SOURCE_CAPABILITIES_EXTENDED, PE_SNK_Send_Not_Supported);
-			CHECK_MSG(pd_data, MSG_STATUS, PE_SNK_Send_Not_Supported);
+			CHECK_MSG(pd_data, MSG_STATUS, PE_SNK_Ready);
 			CHECK_MSG(pd_data, MSG_GET_BATTERY_CAP, PE_SNK_Send_Not_Supported);
 			CHECK_MSG(pd_data, MSG_GET_BATTERY_STATUS, PE_SNK_Send_Not_Supported);
 			CHECK_MSG(pd_data, MSG_BATTERY_CAPABILITIES, PE_SNK_Send_Not_Supported);
@@ -4873,7 +4873,8 @@ policy_state usbpd_policy_src_send_source_alert(struct policy_data *policy)
 policy_state usbpd_policy_snk_source_alert_received(struct policy_data *policy)
 {
 	struct usbpd_data *pd_data = policy_to_usbpd(policy);
-	int ret = PE_SNK_Source_Alert_Received;
+	int ret = PE_SNK_Ready;
+	data_obj_type *pd_obj;
 
 	/**********************************************
 	Actions on entry:
@@ -4882,6 +4883,16 @@ policy_state usbpd_policy_snk_source_alert_received(struct policy_data *policy)
 
 	/* PD State Inform to AP */
 	dev_info(pd_data->dev, "%s\n", __func__);
+
+	if (pd_data->ip_num == S2MU107_USBPD_IP)
+		return ret;
+
+	pd_obj = &policy->rx_data_obj[0];
+
+	if (pd_obj->alert_type.type_of_alert & (0x1 << 2))
+		policy->send_ocp = true;
+
+	ret = PE_SNK_Get_Source_Status;
 
 	return ret;
 }
@@ -4960,7 +4971,8 @@ policy_state usbpd_policy_src_give_source_cap_ext(struct policy_data *policy)
 policy_state usbpd_policy_snk_get_source_status(struct policy_data *policy)
 {
 	struct usbpd_data *pd_data = policy_to_usbpd(policy);
-	int ret = PE_SNK_Get_Source_Status;
+	int ret = PE_SNK_Ready;
+	int data_role = 0;
 
 	/**********************************************
 	Actions on entry:
@@ -4970,6 +4982,16 @@ policy_state usbpd_policy_snk_get_source_status(struct policy_data *policy)
 	/* PD State Inform to AP */
 	dev_info(pd_data->dev, "%s\n", __func__);
 
+	/* Read Data Role */
+	pd_data->phy_ops.get_data_role(pd_data, &data_role);
+
+	usbpd_send_ctrl_msg(pd_data, &policy->tx_msg_header,
+								USBPD_Get_Status, data_role, USBPD_SINK);
+
+	if (policy->send_ocp) {
+		policy->send_ocp = false;
+		pd_data->phy_ops.send_ocp_info(pd_data);
+	}
 	/**********************************************
 	Actions on exit:
 	Pass Source status/outcome to Device Policy Manager
@@ -6127,6 +6149,7 @@ void usbpd_init_policy(struct usbpd_data *pd_data)
 	struct policy_data *policy = &pd_data->policy;
 
 	policy->state = 0;
+	policy->send_ocp = 0;
 	policy->rx_hardreset = 0;
 	policy->rx_softreset = 0;
 	policy->plug = 0;

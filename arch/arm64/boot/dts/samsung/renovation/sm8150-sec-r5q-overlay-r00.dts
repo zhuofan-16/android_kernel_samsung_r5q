@@ -5254,12 +5254,8 @@
 				ti,reset-gpio = <0xffffffff 0x94 0x0>;
 				ti,irq-gpio = <0xffffffff 0x8e 0x0>;
 				ti,port_id = <0x1002>;
-				ti,re_min = <0x280000>;
-				ti,re_max = <0x500000>;
-				ti,f0_min = <0x19000000>;
-				ti,f0_max = <0x25800000>;
-				ti,q_min = <0x80000>;
-				ti,q_max = <0x180000>;
+				ti,iv-width = <0xc>;
+				ti,vbat-mon = <0x1>;
 				status = "ok";
 				pinctrl-names = "default";
 				pinctrl-0 = <0x73 0x74>;
